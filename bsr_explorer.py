@@ -16,9 +16,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QPushButton, QLabel, QFileDialog, 
     QSplitter, QCheckBox, QGroupBox, QTabWidget, QMenu,
     QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMenuBar,
-    QMessageBox, QTextEdit
+    QMessageBox, QTextEdit, QProgressDialog
 )
-from PyQt6.QtCore import Qt, QMimeData, QStandardPaths
+from PyQt6.QtCore import Qt, QMimeData, QStandardPaths, QTimer
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QAction
 import pyqtgraph as pg
 import numpy as np
@@ -253,6 +253,8 @@ class FileTab(QWidget):
             colors = ['r', 'g', 'b', 'y']
             first_plot = None
             
+            print(f"Creating {4} exploded plots...")  # Debug
+            
             for i in range(4):
                 plot_widget = pg.PlotWidget(title=self.channel_names[i])
                 plot_widget.setLabel('left', 'Amplitude')
@@ -276,6 +278,13 @@ class FileTab(QWidget):
                 self.plot_items.append(plot_item)
                 self.plots.append(plot_widget)
                 self.plot_splitter.addWidget(plot_widget)
+                
+                # Ensure plot is visible based on checkbox state
+                is_checked = self.channel_checkboxes[i].isChecked()
+                plot_widget.setVisible(is_checked)
+                print(f"  Plot {i+1} created, visible={is_checked}")  # Debug
+            
+            print(f"Total plots created: {len(self.plots)}, plot_items: {len(self.plot_items)}")  # Debug
         else:
             # Create single combined plot
             plot_widget = pg.PlotWidget(title="All Channels")
@@ -318,7 +327,11 @@ class FileTab(QWidget):
             visible = (state == Qt.CheckState.Checked)
             
             if self.exploded_mode and channel_idx < len(self.plots):
+                # In exploded mode, show/hide entire plot widget
                 self.plots[channel_idx].setVisible(visible)
+                # Update data if making visible
+                if visible and self.reader.data is not None:
+                    self.update_channel_plot(channel_idx)
             else:
                 # In combined mode, hide/show the plot item
                 if visible:
@@ -328,13 +341,39 @@ class FileTab(QWidget):
     
     def load_file(self, filename: str):
         """Load and display BSR file"""
+        # Create progress dialog
+        progress = QProgressDialog("Loading BSR file...", None, 0, 100, self)
+        progress.setWindowTitle("Loading")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(10)
+        QApplication.processEvents()
+        
         self.info_label.setText(f"Loading {os.path.basename(filename)}...")
         QApplication.processEvents()
         
+        # Load file
+        progress.setValue(30)
+        progress.setLabelText("Reading file data...")
+        QApplication.processEvents()
+        
         if self.reader.load_file(filename):
+            progress.setValue(60)
+            progress.setLabelText("Processing data...")
+            QApplication.processEvents()
+            
             self.update_info_label()
+            
+            progress.setValue(80)
+            progress.setLabelText("Updating plots...")
+            QApplication.processEvents()
+            
             self.update_plots()
+            
+            progress.setValue(100)
+            progress.close()
         else:
+            progress.close()
             self.info_label.setText("Error loading file")
     
     def update_info_label(self):
@@ -463,13 +502,16 @@ class FileTab(QWidget):
         if self.last_x_range is not None:
             last_range_size = self.last_x_range[1] - self.last_x_range[0]
             # Only update if zoom changed (range size changed significantly)
-            # Use 1% threshold to avoid floating point comparison issues
-            if last_range_size > 0 and abs(current_range_size - last_range_size) / last_range_size < 0.01:
+            # Use 0.1% threshold for more sensitive detection
+            if last_range_size > 0 and abs(current_range_size - last_range_size) / last_range_size < 0.001:
                 # This is just a pan, not a zoom - don't resample
                 self.last_x_range = x_range
                 return
         
+        # Update last range before resampling
         self.last_x_range = x_range
+        
+        print(f"Zoom detected: range size = {current_range_size:.6f}s")  # Debug
         
         # Calculate which data points are visible
         time_axis_full = self.reader.get_time_axis()
@@ -485,6 +527,8 @@ class FileTab(QWidget):
         if visible_samples <= 0:
             return
         
+        print(f"Visible samples: {visible_samples}, Full samples: {num_samples}")  # Debug
+        
         # Dynamically adjust downsampling based on visible range
         max_display_samples = 100000
         
@@ -495,6 +539,7 @@ class FileTab(QWidget):
                 
                 if visible_samples > max_display_samples:
                     # Use histogram-based downsampling to preserve extrema
+                    print(f"Downsampling channel {i+1}...")  # Debug
                     time_slice = time_axis_full[start_idx:end_idx]
                     data_slice = channel_data[start_idx:end_idx]
                     time_down, data_down = self.histogram_downsample(
@@ -503,6 +548,7 @@ class FileTab(QWidget):
                     self.plot_items[i].setData(time_down, data_down)
                 else:
                     # Show full resolution
+                    print(f"Full resolution channel {i+1}: {visible_samples} points")  # Debug
                     time_slice = time_axis_full[start_idx:end_idx]
                     data_slice = channel_data[start_idx:end_idx]
                     self.plot_items[i].setData(time_slice, data_slice)
