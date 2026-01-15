@@ -253,6 +253,8 @@ class FileTab(QWidget):
                 widget.deleteLater()
         self.plots.clear()
         self.plot_items.clear()
+        # Reset signal connection flag since old plot widgets are deleted
+        self.range_change_connected = False
         
         # Configure pyqtgraph for performance
         pg.setConfigOptions(antialias=False, useOpenGL=True)
@@ -457,7 +459,7 @@ class FileTab(QWidget):
     
     def histogram_downsample(self, data, time_axis, target_samples):
         """
-        Fast vectorized downsampling using histogram-based approach that preserves extrema.
+        Fast fully-vectorized downsampling using histogram-based approach that preserves extrema.
         
         Args:
             data: Channel data to downsample
@@ -490,31 +492,33 @@ class FileTab(QWidget):
         min_indices = np.argmin(data_bins, axis=1)
         max_indices = np.argmax(data_bins, axis=1)
         
-        # Extract min and max values and times
+        # Extract min and max values and times using advanced indexing
         bin_range = np.arange(num_bins)
         min_data = data_bins[bin_range, min_indices]
         max_data = data_bins[bin_range, max_indices]
         min_time = time_bins[bin_range, min_indices]
         max_time = time_bins[bin_range, max_indices]
         
-        # Interleave min and max in time order
-        # Stack and sort by time for each bin
-        downsampled_time = []
-        downsampled_data = []
+        # Fully vectorized interleaving of min and max in time order
+        # Determine which comes first: min or max
+        min_first = min_indices <= max_indices
         
-        for i in range(num_bins):
-            if min_indices[i] == max_indices[i]:
-                # Constant bin, add once
-                downsampled_time.append(min_time[i])
-                downsampled_data.append(min_data[i])
-            elif min_indices[i] < max_indices[i]:
-                downsampled_time.extend([min_time[i], max_time[i]])
-                downsampled_data.extend([min_data[i], max_data[i]])
-            else:
-                downsampled_time.extend([max_time[i], min_time[i]])
-                downsampled_data.extend([max_data[i], min_data[i]])
+        # Create output arrays (2 points per bin, but may be same point)
+        # Pre-allocate for max size (2 * num_bins)
+        first_time = np.where(min_first, min_time, max_time)
+        first_data = np.where(min_first, min_data, max_data)
+        second_time = np.where(min_first, max_time, min_time)
+        second_data = np.where(min_first, max_data, min_data)
         
-        return np.array(downsampled_time), np.array(downsampled_data)
+        # Interleave: [first0, second0, first1, second1, ...]
+        result_time = np.empty(2 * num_bins, dtype=time_axis.dtype)
+        result_data = np.empty(2 * num_bins, dtype=data.dtype)
+        result_time[0::2] = first_time
+        result_time[1::2] = second_time
+        result_data[0::2] = first_data
+        result_data[1::2] = second_data
+        
+        return result_time, result_data
     
     def on_view_range_changed(self):
         """Handle view range changes to dynamically resample data on zoom only"""
