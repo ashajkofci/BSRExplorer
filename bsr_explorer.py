@@ -2,7 +2,7 @@
 BSR Explorer - Main Application
 A portable, fast, and optimized viewer for BSR binary files
 
-Version: 1.0.1
+Version: 1.1.0
 Author: Adrian Shajkofci
 License: MIT
 """
@@ -24,7 +24,7 @@ import pyqtgraph as pg
 import numpy as np
 from bsr_reader import BSRReader
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 __author__ = "Adrian Shajkofci"
 __license__ = "MIT"
 
