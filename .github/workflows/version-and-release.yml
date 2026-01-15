@@ -1,0 +1,183 @@
+name: Increment Version and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
+
+jobs:
+  increment-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+      commit_sha: ${{ steps.bump.outputs.commit_sha }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Bump version
+      id: bump
+      shell: bash
+      run: |
+        # Read current version
+        CURRENT_VERSION=$(grep '__version__ = ' bsr_explorer.py | cut -d'"' -f2)
+        echo "Current version: $CURRENT_VERSION"
+        
+        # Split version into parts
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
+        
+        # Increment based on input
+        case "${{ github.event.inputs.version_bump }}" in
+          major)
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+            ;;
+          minor)
+            MINOR=$((MINOR + 1))
+            PATCH=0
+            ;;
+          patch)
+            PATCH=$((PATCH + 1))
+            ;;
+        esac
+        
+        NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+        echo "New version: $NEW_VERSION"
+        echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+        
+        # Update version in bsr_explorer.py (target specific lines)
+        sed -i "s/^Version: $CURRENT_VERSION$/Version: $NEW_VERSION/" bsr_explorer.py
+        sed -i "s/^__version__ = \"$CURRENT_VERSION\"$/__version__ = \"$NEW_VERSION\"/" bsr_explorer.py
+        
+        # Update version in README.md (escape asterisks properly)
+        sed -i "s/^\*\*Version:\*\* $CURRENT_VERSION$/\*\*Version:\*\* $NEW_VERSION/" README.md
+        
+        # Configure git
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Commit changes
+        git add bsr_explorer.py README.md
+        git commit -m "Bump version to $NEW_VERSION"
+        
+        # Get commit SHA before pushing
+        COMMIT_SHA=$(git rev-parse HEAD)
+        echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+        
+        # Create and push tag
+        git tag -a "v$NEW_VERSION" -m "Release version $NEW_VERSION"
+        git push origin HEAD:${{ github.ref_name }}
+        git push origin "v$NEW_VERSION"
+
+  build:
+    needs: increment-version
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            artifact_name: BSRExplorer-Windows
+            asset_name: BSRExplorer-Windows.zip
+          - os: ubuntu-latest
+            artifact_name: BSRExplorer-Linux
+            asset_name: BSRExplorer-Linux.tar.gz
+          - os: macos-latest
+            artifact_name: BSRExplorer-macOS
+            asset_name: BSRExplorer-macOS.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ needs.increment-version.outputs.commit_sha }}
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        pyinstaller --onefile --windowed --name BSRExplorer --icon=NONE bsr_explorer.py
+        cd dist
+        Compress-Archive -Path BSRExplorer.exe -DestinationPath ../BSRExplorer-Windows.zip
+      shell: pwsh
+
+    - name: Build executable (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb-xinerama0 libxcb-cursor0
+        pyinstaller --onefile --windowed --name BSRExplorer bsr_explorer.py
+        cd dist
+        tar -czf ../BSRExplorer-Linux.tar.gz BSRExplorer
+
+    - name: Build executable (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        pyinstaller --onefile --windowed --name BSRExplorer bsr_explorer.py
+        cd dist
+        zip -r ../BSRExplorer-macOS.zip BSRExplorer
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.asset_name }}
+
+  release:
+    needs: [increment-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4.1.3
+      with:
+        path: artifacts
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ needs.increment-version.outputs.new_version }}
+        name: Release v${{ needs.increment-version.outputs.new_version }}
+        files: |
+          artifacts/BSRExplorer-Windows/BSRExplorer-Windows.zip
+          artifacts/BSRExplorer-Linux/BSRExplorer-Linux.tar.gz
+          artifacts/BSRExplorer-macOS/BSRExplorer-macOS.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
