@@ -254,6 +254,9 @@ class FileTab(QWidget):
         self.plots.clear()
         self.plot_items.clear()
         
+        # Reset signal connection flag when recreating plots
+        self.range_change_connected = False
+        
         # Configure pyqtgraph for performance
         pg.setConfigOptions(antialias=False, useOpenGL=True)
         
@@ -287,9 +290,8 @@ class FileTab(QWidget):
                 self.plots.append(plot_widget)
                 self.plot_splitter.addWidget(plot_widget)
                 
-                # Ensure plot is visible based on checkbox state
-                is_checked = self.channel_checkboxes[i].isChecked()
-                plot_widget.setVisible(is_checked)
+                # All plots should be visible initially, controlled by checkboxes later
+                plot_widget.setVisible(True)
         else:
             # Create single combined plot
             plot_widget = pg.PlotWidget(title="All Channels")
@@ -325,24 +327,40 @@ class FileTab(QWidget):
         # Reload data if available
         if self.reader.data is not None:
             self.update_plots()
+            
+        # Apply current checkbox states to exploded plots
+        if self.exploded_mode:
+            for i in range(min(len(self.plots), len(self.channel_checkboxes))):
+                is_checked = self.channel_checkboxes[i].isChecked()
+                self.plots[i].setVisible(is_checked)
+                if is_checked and self.reader.data is not None:
+                    self.update_channel_plot(i)
     
     def toggle_channel(self, channel_idx: int, state):
         """Toggle visibility of a specific channel"""
-        if channel_idx < len(self.plot_items):
-            visible = (state == Qt.CheckState.Checked)
+        if channel_idx >= len(self.plot_items):
+            return
             
-            if self.exploded_mode and channel_idx < len(self.plots):
-                # In exploded mode, show/hide entire plot widget
+        visible = (state == Qt.CheckState.Checked)
+        
+        if self.exploded_mode:
+            # In exploded mode, show/hide entire plot widget
+            if channel_idx < len(self.plots):
                 self.plots[channel_idx].setVisible(visible)
-                # Update data if making visible
-                if visible and self.reader.data is not None:
-                    self.update_channel_plot(channel_idx)
+                # ALWAYS update data when toggling, whether showing or hiding
+                if self.reader.data is not None:
+                    if visible:
+                        # Make visible and update with data
+                        self.update_channel_plot(channel_idx)
+                    else:
+                        # Hide by clearing data
+                        self.plot_items[channel_idx].setData([], [])
+        else:
+            # In combined mode, hide/show the plot item by updating data
+            if visible and self.reader.data is not None:
+                self.update_channel_plot(channel_idx)
             else:
-                # In combined mode, hide/show the plot item
-                if visible:
-                    self.update_channel_plot(channel_idx)
-                else:
-                    self.plot_items[channel_idx].setData([], [])
+                self.plot_items[channel_idx].setData([], [])
     
     def load_file(self, filename: str):
         """Load and display BSR file"""
@@ -457,7 +475,8 @@ class FileTab(QWidget):
     
     def histogram_downsample(self, data, time_axis, target_samples):
         """
-        Fast vectorized downsampling using histogram-based approach that preserves extrema.
+        Ultra-fast adaptive downsampling using smart binning strategy.
+        Uses fewer bins and only downsamples middle bins for maximum speed.
         
         Args:
             data: Channel data to downsample
@@ -470,17 +489,35 @@ class FileTab(QWidget):
         if len(data) <= target_samples or target_samples <= 0:
             return time_axis, data
         
-        # Calculate bin size - use target_samples // 2 since we keep 2 points per bin
-        num_bins = max(1, target_samples // 2)
-        bin_size = len(data) // num_bins
+        # Adaptive binning: use fewer bins for better performance
+        # Keep edges (first/last 5%) at full resolution, downsample middle
+        edge_percent = 0.05
+        edge_size = int(len(data) * edge_percent)
         
+        # Split into: start edge | middle | end edge
+        start_edge_data = data[:edge_size]
+        start_edge_time = time_axis[:edge_size]
+        end_edge_data = data[-edge_size:]
+        end_edge_time = time_axis[-edge_size:]
+        middle_data = data[edge_size:-edge_size]
+        middle_time = time_axis[edge_size:-edge_size]
+        
+        # Calculate bins for middle section only
+        middle_target = max(10, target_samples - 2 * edge_size)  # Minimum 10 bins
+        num_bins = min(middle_target // 2, len(middle_data) // 100)  # Fewer bins = faster
+        
+        if num_bins <= 1 or len(middle_data) == 0:
+            # Not enough data to bin, return as is
+            return time_axis, data
+        
+        bin_size = len(middle_data) // num_bins
         if bin_size <= 0:
             return time_axis, data
         
-        # Truncate data to fit evenly into bins for vectorization
+        # Vectorized binning for middle section only
         n_samples = num_bins * bin_size
-        data_truncated = data[:n_samples]
-        time_truncated = time_axis[:n_samples]
+        data_truncated = middle_data[:n_samples]
+        time_truncated = middle_time[:n_samples]
         
         # Reshape into bins for vectorized operations
         data_bins = data_truncated.reshape(num_bins, bin_size)
@@ -497,24 +534,45 @@ class FileTab(QWidget):
         min_time = time_bins[bin_range, min_indices]
         max_time = time_bins[bin_range, max_indices]
         
-        # Interleave min and max in time order
-        # Stack and sort by time for each bin
-        downsampled_time = []
-        downsampled_data = []
+        # Build result efficiently with preallocated arrays
+        # Interleave min/max based on time order
+        time_order = min_indices < max_indices
         
+        # Preallocate result arrays
+        max_result_size = 2 * edge_size + 2 * num_bins
+        result_time = np.empty(max_result_size, dtype=time_axis.dtype)
+        result_data = np.empty(max_result_size, dtype=data.dtype)
+        
+        # Copy start edge
+        result_time[:edge_size] = start_edge_time
+        result_data[:edge_size] = start_edge_data
+        pos = edge_size
+        
+        # Add middle bins (min/max in time order)
         for i in range(num_bins):
             if min_indices[i] == max_indices[i]:
-                # Constant bin, add once
-                downsampled_time.append(min_time[i])
-                downsampled_data.append(min_data[i])
-            elif min_indices[i] < max_indices[i]:
-                downsampled_time.extend([min_time[i], max_time[i]])
-                downsampled_data.extend([min_data[i], max_data[i]])
+                # Constant bin
+                result_time[pos] = min_time[i]
+                result_data[pos] = min_data[i]
+                pos += 1
+            elif time_order[i]:
+                # min comes before max
+                result_time[pos:pos+2] = [min_time[i], max_time[i]]
+                result_data[pos:pos+2] = [min_data[i], max_data[i]]
+                pos += 2
             else:
-                downsampled_time.extend([max_time[i], min_time[i]])
-                downsampled_data.extend([max_data[i], min_data[i]])
+                # max comes before min
+                result_time[pos:pos+2] = [max_time[i], min_time[i]]
+                result_data[pos:pos+2] = [max_data[i], min_data[i]]
+                pos += 2
         
-        return np.array(downsampled_time), np.array(downsampled_data)
+        # Copy end edge
+        result_time[pos:pos+edge_size] = end_edge_time
+        result_data[pos:pos+edge_size] = end_edge_data
+        pos += edge_size
+        
+        # Trim to actual size
+        return result_time[:pos], result_data[:pos]
     
     def on_view_range_changed(self):
         """Handle view range changes to dynamically resample data on zoom only"""
@@ -545,8 +603,8 @@ class FileTab(QWidget):
         time_axis_full = self.reader.get_time_axis()
         num_samples = len(time_axis_full)
         
-        # Expand range by 2x on each side for better context
-        range_margin = current_range_size  # Add 1x range on each side (total 3x)
+        # Expand range significantly for better context (5x total: 2x before + 1x view + 2x after)
+        range_margin = current_range_size * 2  # Add 2x range on each side
         expanded_start = x_range[0] - range_margin
         expanded_end = x_range[1] + range_margin
         
