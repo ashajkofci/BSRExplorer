@@ -169,6 +169,7 @@ class FileTab(QWidget):
         self.exploded_mode = False
         self.channel_names = channel_names
         self.range_change_connected = False  # Track if signal is connected
+        self.last_x_range = None  # Track last X range to detect zoom vs pan
         
         self.init_ui()
         self.load_file(filename)
@@ -355,50 +356,90 @@ class FileTab(QWidget):
         
         time_axis = self.reader.get_time_axis()
         
-        # For large files, downsample for initial view
+        # For large files, downsample for initial view using histogram method
         num_samples = len(time_axis)
         max_display_samples = 100000  # Display max 100k points initially
-        
-        if num_samples > max_display_samples:
-            # Downsample by taking every nth point
-            step = num_samples // max_display_samples
-            time_axis = time_axis[::step]
-            downsample = True
-        else:
-            step = 1
-            downsample = False
         
         # Update each channel
         for i in range(4):
             if self.channel_checkboxes[i].isChecked():
-                self.update_channel_plot(i, time_axis, step, downsample)
+                channel_data = self.reader.get_channel(i)
+                
+                if num_samples > max_display_samples:
+                    # Use histogram-based downsampling
+                    time_down, data_down = self.histogram_downsample(
+                        channel_data, time_axis, max_display_samples
+                    )
+                    self.plot_items[i].setData(time_down, data_down)
+                else:
+                    # Show full resolution
+                    self.plot_items[i].setData(time_axis, channel_data)
     
-    def update_channel_plot(self, channel_idx: int, time_axis=None, step=1, downsample=False):
+    def update_channel_plot(self, channel_idx: int):
         """Update a specific channel plot"""
         if self.reader.data is None or channel_idx >= len(self.plot_items):
             return
         
-        if time_axis is None:
-            time_axis = self.reader.get_time_axis()
-            num_samples = len(time_axis)
-            max_display_samples = 100000
-            
-            if num_samples > max_display_samples:
-                step = num_samples // max_display_samples
-                time_axis = time_axis[::step]
-                downsample = True
-            else:
-                step = 1
-                downsample = False
-        
+        time_axis = self.reader.get_time_axis()
         channel_data = self.reader.get_channel(channel_idx)
-        if downsample:
-            channel_data = channel_data[::step]
+        num_samples = len(time_axis)
+        max_display_samples = 100000
         
-        self.plot_items[channel_idx].setData(time_axis, channel_data)
+        if num_samples > max_display_samples:
+            # Use histogram-based downsampling
+            time_down, data_down = self.histogram_downsample(
+                channel_data, time_axis, max_display_samples
+            )
+            self.plot_items[channel_idx].setData(time_down, data_down)
+        else:
+            # Show full resolution
+            self.plot_items[channel_idx].setData(time_axis, channel_data)
+    
+    def histogram_downsample(self, data, time_axis, target_samples):
+        """
+        Downsample data using histogram-based approach that preserves extrema.
+        
+        Args:
+            data: Channel data to downsample
+            time_axis: Corresponding time axis
+            target_samples: Target number of samples
+            
+        Returns:
+            Tuple of (downsampled_time, downsampled_data)
+        """
+        if len(data) <= target_samples:
+            return time_axis, data
+        
+        # Calculate bin size
+        bin_size = len(data) // target_samples
+        
+        downsampled_time = []
+        downsampled_data = []
+        
+        for i in range(0, len(data), bin_size):
+            end_idx = min(i + bin_size, len(data))
+            bin_data = data[i:end_idx]
+            bin_time = time_axis[i:end_idx]
+            
+            if len(bin_data) == 0:
+                continue
+            
+            # Keep extrema (min and max) from each bin
+            min_idx = np.argmin(bin_data)
+            max_idx = np.argmax(bin_data)
+            
+            # Add min and max in time order
+            if min_idx < max_idx:
+                downsampled_time.extend([bin_time[min_idx], bin_time[max_idx]])
+                downsampled_data.extend([bin_data[min_idx], bin_data[max_idx]])
+            else:
+                downsampled_time.extend([bin_time[max_idx], bin_time[min_idx]])
+                downsampled_data.extend([bin_data[max_idx], bin_data[min_idx]])
+        
+        return np.array(downsampled_time), np.array(downsampled_data)
     
     def on_view_range_changed(self):
-        """Handle view range changes to dynamically resample data"""
+        """Handle view range changes to dynamically resample data on zoom only"""
         if self.reader.data is None or len(self.plots) == 0:
             return
         
@@ -406,6 +447,20 @@ class FileTab(QWidget):
         plot = self.plots[0]
         view_range = plot.viewRange()
         x_range = view_range[0]  # [min_time, max_time]
+        
+        # Check if this is a zoom (range size changed) or just a pan (range shifted)
+        current_range_size = x_range[1] - x_range[0]
+        
+        if self.last_x_range is not None:
+            last_range_size = self.last_x_range[1] - self.last_x_range[0]
+            # Only update if zoom changed (range size changed significantly)
+            # Use 1% threshold to avoid floating point comparison issues
+            if abs(current_range_size - last_range_size) / last_range_size < 0.01:
+                # This is just a pan, not a zoom - don't resample
+                self.last_x_range = x_range
+                return
+        
+        self.last_x_range = x_range
         
         # Calculate which data points are visible
         time_axis_full = self.reader.get_time_axis()
@@ -418,21 +473,30 @@ class FileTab(QWidget):
         # Calculate how many points are in the visible range
         visible_samples = end_idx - start_idx
         
+        if visible_samples <= 0:
+            return
+        
         # Dynamically adjust downsampling based on visible range
         max_display_samples = 100000
-        if visible_samples > max_display_samples:
-            step = visible_samples // max_display_samples
-        else:
-            step = 1
         
         # Update plots with appropriate data resolution
-        time_slice = time_axis_full[start_idx:end_idx:step]
-        
         for i in range(4):
             if self.channel_checkboxes[i].isChecked():
                 channel_data = self.reader.get_channel(i)
-                data_slice = channel_data[start_idx:end_idx:step]
-                self.plot_items[i].setData(time_slice, data_slice)
+                
+                if visible_samples > max_display_samples:
+                    # Use histogram-based downsampling to preserve extrema
+                    time_slice = time_axis_full[start_idx:end_idx]
+                    data_slice = channel_data[start_idx:end_idx]
+                    time_down, data_down = self.histogram_downsample(
+                        data_slice, time_slice, max_display_samples
+                    )
+                    self.plot_items[i].setData(time_down, data_down)
+                else:
+                    # Show full resolution
+                    time_slice = time_axis_full[start_idx:end_idx]
+                    data_slice = channel_data[start_idx:end_idx]
+                    self.plot_items[i].setData(time_slice, data_slice)
 
 
 class BSRExplorer(QMainWindow):
