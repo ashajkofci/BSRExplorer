@@ -168,6 +168,7 @@ class FileTab(QWidget):
         self.plot_items = []
         self.exploded_mode = False
         self.channel_names = channel_names
+        self.range_change_connected = False  # Track if signal is connected
         
         self.init_ui()
         self.load_file(filename)
@@ -237,7 +238,7 @@ class FileTab(QWidget):
         # Clear existing plots - properly remove from QSplitter
         while self.plot_splitter.count() > 0:
             widget = self.plot_splitter.widget(0)
-            self.plot_splitter.widget(0).setParent(None)
+            widget.setParent(None)
             if widget:
                 widget.deleteLater()
         self.plots.clear()
@@ -260,8 +261,10 @@ class FileTab(QWidget):
                 # Link X axis to first plot (time axis locked together)
                 if first_plot is None:
                     first_plot = plot_widget
-                    # Connect view range change to update data dynamically
-                    plot_widget.sigRangeChanged.connect(lambda: self.on_view_range_changed())
+                    # Connect view range change to update data dynamically (only once)
+                    if not self.range_change_connected:
+                        plot_widget.sigRangeChanged.connect(lambda: self.on_view_range_changed())
+                        self.range_change_connected = True
                 else:
                     plot_widget.setXLink(first_plot)
                 
@@ -283,8 +286,10 @@ class FileTab(QWidget):
             # Enable mouse interaction
             plot_widget.setMouseEnabled(x=True, y=True)
             
-            # Connect view range change to update data dynamically
-            plot_widget.sigRangeChanged.connect(lambda: self.on_view_range_changed())
+            # Connect view range change to update data dynamically (only once)
+            if not self.range_change_connected:
+                plot_widget.sigRangeChanged.connect(lambda: self.on_view_range_changed())
+                self.range_change_connected = True
             
             colors = ['r', 'g', 'b', 'y']
             for i in range(4):
