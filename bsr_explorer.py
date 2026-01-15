@@ -295,7 +295,7 @@ class BSRExplorer(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.channel_names = ["SSC", "FL1", "FL2", "SSC"]  # Default names
+        self.channel_names = ["SSC", "FL1", "FL2", "FSC"]  # Default names
         self.sample_rate = 200000  # Default 200 kHz
         self.load_settings()
         
