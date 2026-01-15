@@ -4,68 +4,102 @@ A portable, fast, and optimized viewer for BSR binary files
 """
 import sys
 import os
+import json
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QHBoxLayout, QPushButton, QLabel, QFileDialog, 
-    QSplitter, QCheckBox, QGroupBox
+    QSplitter, QCheckBox, QGroupBox, QTabWidget, QMenu,
+    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMenuBar
 )
-from PyQt6.QtCore import Qt, QMimeData
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent
+from PyQt6.QtCore import Qt, QMimeData, QStandardPaths
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QAction
 import pyqtgraph as pg
 import numpy as np
 from bsr_reader import BSRReader
 
 
-class BSRExplorer(QMainWindow):
-    """Main window for BSR file exploration"""
+class SettingsDialog(QDialog):
+    """Dialog for configuring channel names and sample rate"""
     
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent, channel_names, sample_rate):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setModal(True)
+        
+        layout = QFormLayout(self)
+        
+        # Channel name inputs
+        self.channel_inputs = []
+        for i, name in enumerate(channel_names):
+            line_edit = QLineEdit(name)
+            layout.addRow(f"Channel {i+1} Name:", line_edit)
+            self.channel_inputs.append(line_edit)
+        
+        # Sample rate input
+        self.sample_rate_input = QLineEdit(str(sample_rate))
+        layout.addRow("Sample Rate (Hz):", self.sample_rate_input)
+        
+        # Buttons
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+    
+    def get_values(self):
+        """Get the configured values"""
+        channel_names = [inp.text() for inp in self.channel_inputs]
+        try:
+            sample_rate = int(self.sample_rate_input.text())
+        except ValueError:
+            sample_rate = 200000  # Default
+        return channel_names, sample_rate
+
+
+class FileTab(QWidget):
+    """Widget for a single file tab"""
+    
+    def __init__(self, parent, filename, channel_names, sample_rate):
+        super().__init__(parent)
+        self.parent_explorer = parent
+        self.filename = filename
         self.reader = BSRReader()
+        self.reader.sample_rate = sample_rate
         self.plots = []
         self.plot_items = []
         self.exploded_mode = False
+        self.channel_names = channel_names
         
         self.init_ui()
+        self.load_file(filename)
         
     def init_ui(self):
-        """Initialize the user interface"""
-        self.setWindowTitle("BSR Explorer")
-        self.setGeometry(100, 100, 1200, 800)
-        
-        # Enable drag and drop
-        self.setAcceptDrops(True)
-        
-        # Create central widget and main layout
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        """Initialize the tab UI"""
+        layout = QVBoxLayout(self)
         
         # Control panel
         control_panel = self.create_control_panel()
-        main_layout.addWidget(control_panel)
+        layout.addWidget(control_panel)
         
         # Info label
-        self.info_label = QLabel("Drag and drop a BSR file or click 'Open File'")
+        self.info_label = QLabel("Loading...")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        main_layout.addWidget(self.info_label)
+        layout.addWidget(self.info_label)
         
         # Plot area with splitter for resizable plots
         self.plot_splitter = QSplitter(Qt.Orientation.Vertical)
-        main_layout.addWidget(self.plot_splitter, 1)
+        layout.addWidget(self.plot_splitter, 1)
         
         # Initial plot setup
         self.setup_plots()
-        
+    
     def create_control_panel(self) -> QWidget:
         """Create the control panel with buttons and options"""
         panel = QGroupBox("Controls")
         layout = QHBoxLayout()
-        
-        # Open file button
-        self.open_btn = QPushButton("Open File")
-        self.open_btn.clicked.connect(self.open_file)
-        layout.addWidget(self.open_btn)
         
         # Explode/Combine view toggle
         self.explode_checkbox = QCheckBox("Explode into 4 Plots")
@@ -75,7 +109,7 @@ class BSRExplorer(QMainWindow):
         # Channel visibility checkboxes
         self.channel_checkboxes = []
         for i in range(4):
-            cb = QCheckBox(f"Ch{i+1}")
+            cb = QCheckBox(self.channel_names[i])
             cb.setChecked(True)
             cb.stateChanged.connect(lambda state, idx=i: self.toggle_channel(idx, state))
             self.channel_checkboxes.append(cb)
@@ -84,7 +118,24 @@ class BSRExplorer(QMainWindow):
         layout.addStretch()
         panel.setLayout(layout)
         return panel
-        
+    
+    def update_channel_names(self, channel_names):
+        """Update channel names in UI"""
+        self.channel_names = channel_names
+        for i, cb in enumerate(self.channel_checkboxes):
+            cb.setText(channel_names[i])
+        # Update plot titles if in exploded mode
+        if self.exploded_mode:
+            for i, plot in enumerate(self.plots):
+                plot.setTitle(channel_names[i])
+    
+    def update_sample_rate(self, sample_rate):
+        """Update sample rate and refresh plots"""
+        self.reader.sample_rate = sample_rate
+        if self.reader.data is not None:
+            self.update_info_label()
+            self.update_plots()
+    
     def setup_plots(self):
         """Setup plot widgets"""
         # Clear existing plots
@@ -98,15 +149,23 @@ class BSRExplorer(QMainWindow):
         pg.setConfigOptions(antialias=False, useOpenGL=True)
         
         if self.exploded_mode:
-            # Create 4 separate plots
+            # Create 4 separate plots in the same window with linked X axis
             colors = ['r', 'g', 'b', 'y']
+            first_plot = None
+            
             for i in range(4):
-                plot_widget = pg.PlotWidget(title=f"Channel {i+1}")
+                plot_widget = pg.PlotWidget(title=self.channel_names[i])
                 plot_widget.setLabel('left', 'Amplitude')
                 plot_widget.setLabel('bottom', 'Time', units='s')
                 plot_widget.showGrid(x=True, y=True, alpha=0.3)
                 
-                # Enable mouse interaction
+                # Link X axis to first plot (time axis locked together)
+                if first_plot is None:
+                    first_plot = plot_widget
+                else:
+                    plot_widget.setXLink(first_plot)
+                
+                # Enable mouse interaction - Y axis independent, X axis linked
                 plot_widget.setMouseEnabled(x=True, y=True)
                 
                 plot_item = plot_widget.plot(pen=pg.mkPen(color=colors[i], width=1))
@@ -128,7 +187,7 @@ class BSRExplorer(QMainWindow):
             for i in range(4):
                 plot_item = plot_widget.plot(
                     pen=pg.mkPen(color=colors[i], width=1),
-                    name=f"Channel {i+1}"
+                    name=self.channel_names[i]
                 )
                 self.plot_items.append(plot_item)
             
@@ -158,37 +217,28 @@ class BSRExplorer(QMainWindow):
                 else:
                     self.plot_items[channel_idx].setData([], [])
     
-    def open_file(self):
-        """Open file dialog to select BSR file"""
-        filename, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open BSR File",
-            "",
-            "BSR Files (*.bsr);;All Files (*.*)"
-        )
-        
-        if filename:
-            self.load_file(filename)
-    
     def load_file(self, filename: str):
         """Load and display BSR file"""
         self.info_label.setText(f"Loading {os.path.basename(filename)}...")
         QApplication.processEvents()
         
         if self.reader.load_file(filename):
-            num_samples = self.reader.get_num_samples()
-            duration = self.reader.get_duration()
-            
-            self.info_label.setText(
-                f"File: {os.path.basename(filename)} | "
-                f"Samples: {num_samples:,} | "
-                f"Duration: {duration:.2f}s | "
-                f"Sample Rate: {self.reader.sample_rate/1000:.0f} kHz"
-            )
-            
+            self.update_info_label()
             self.update_plots()
         else:
             self.info_label.setText("Error loading file")
+    
+    def update_info_label(self):
+        """Update the info label with file statistics"""
+        num_samples = self.reader.get_num_samples()
+        duration = self.reader.get_duration()
+        
+        self.info_label.setText(
+            f"File: {os.path.basename(self.filename)} | "
+            f"Samples: {num_samples:,} | "
+            f"Duration: {duration:.2f}s | "
+            f"Sample Rate: {self.reader.sample_rate/1000:.0f} kHz"
+        )
     
     def update_plots(self):
         """Update plot with current data"""
@@ -238,6 +288,205 @@ class BSRExplorer(QMainWindow):
             channel_data = channel_data[::step]
         
         self.plot_items[channel_idx].setData(time_axis, channel_data)
+
+
+class BSRExplorer(QMainWindow):
+    """Main window for BSR file exploration"""
+    
+    def __init__(self):
+        super().__init__()
+        self.channel_names = ["SSC", "FL1", "FL2", "SSC"]  # Default names
+        self.sample_rate = 200000  # Default 200 kHz
+        self.load_settings()
+        
+        self.init_ui()
+        
+    def get_settings_path(self):
+        """Get OS-specific settings file path"""
+        app_data_dir = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppDataLocation
+        )
+        settings_dir = Path(app_data_dir) / "BSRExplorer"
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        return settings_dir / "settings.json"
+    
+    def load_settings(self):
+        """Load settings from OS-specific directory"""
+        try:
+            settings_path = self.get_settings_path()
+            if settings_path.exists():
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+                    self.channel_names = settings.get('channel_names', self.channel_names)
+                    self.sample_rate = settings.get('sample_rate', self.sample_rate)
+        except Exception as e:
+            print(f"Could not load settings: {e}")
+    
+    def save_settings(self):
+        """Save settings to OS-specific directory"""
+        try:
+            settings_path = self.get_settings_path()
+            settings = {
+                'channel_names': self.channel_names,
+                'sample_rate': self.sample_rate
+            }
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f, indent=2)
+        except Exception as e:
+            print(f"Could not save settings: {e}")
+        
+    def init_ui(self):
+        """Initialize the user interface"""
+        self.setWindowTitle("BSR Explorer")
+        self.setGeometry(100, 100, 1200, 800)
+        
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+        
+        # Create menu bar
+        self.create_menu_bar()
+        
+        # Create central widget and main layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        
+        # Create tab widget for multiple files
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_widget.customContextMenuRequested.connect(self.show_tab_context_menu)
+        main_layout.addWidget(self.tab_widget)
+        
+        # Add initial empty state
+        if self.tab_widget.count() == 0:
+            self.show_empty_state()
+    
+    def create_menu_bar(self):
+        """Create the menu bar"""
+        menubar = self.menuBar()
+        
+        # File menu
+        file_menu = menubar.addMenu("&File")
+        
+        open_action = QAction("&Open File", self)
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self.open_file)
+        file_menu.addAction(open_action)
+        
+        file_menu.addSeparator()
+        
+        exit_action = QAction("E&xit", self)
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+        
+        # Settings menu
+        settings_menu = menubar.addMenu("&Settings")
+        
+        config_action = QAction("&Configure Channels && Sample Rate", self)
+        config_action.triggered.connect(self.show_settings_dialog)
+        settings_menu.addAction(config_action)
+    
+    def show_settings_dialog(self):
+        """Show the settings dialog"""
+        dialog = SettingsDialog(self, self.channel_names, self.sample_rate)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.channel_names, self.sample_rate = dialog.get_values()
+            self.save_settings()
+            
+            # Update all open tabs
+            for i in range(self.tab_widget.count()):
+                widget = self.tab_widget.widget(i)
+                if isinstance(widget, FileTab):
+                    widget.update_channel_names(self.channel_names)
+                    widget.update_sample_rate(self.sample_rate)
+    
+    def show_empty_state(self):
+        """Show empty state message"""
+        empty_widget = QWidget()
+        layout = QVBoxLayout(empty_widget)
+        
+        label = QLabel("Drag and drop a BSR file or use File → Open File")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        
+        open_btn = QPushButton("Open File")
+        open_btn.clicked.connect(self.open_file)
+        layout.addWidget(open_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        self.tab_widget.addTab(empty_widget, "Welcome")
+    
+    def open_file(self):
+        """Open file dialog to select BSR file"""
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open BSR File",
+            "",
+            "BSR Files (*.bsr);;All Files (*.*)"
+        )
+        
+        if filename:
+            self.add_file_tab(filename)
+    
+    def add_file_tab(self, filename: str):
+        """Add a new tab for a file"""
+        # Remove welcome tab if present
+        if self.tab_widget.count() == 1:
+            widget = self.tab_widget.widget(0)
+            if not isinstance(widget, FileTab):
+                self.tab_widget.removeTab(0)
+        
+        # Create new tab
+        tab = FileTab(self, filename, self.channel_names.copy(), self.sample_rate)
+        tab_name = os.path.basename(filename)
+        self.tab_widget.addTab(tab, tab_name)
+        self.tab_widget.setCurrentWidget(tab)
+    
+    def close_tab(self, index: int):
+        """Close a tab"""
+        widget = self.tab_widget.widget(index)
+        if isinstance(widget, FileTab):
+            widget.reader.close()
+        self.tab_widget.removeTab(index)
+        
+        # Show welcome screen if no tabs left
+        if self.tab_widget.count() == 0:
+            self.show_empty_state()
+    
+    def show_tab_context_menu(self, position):
+        """Show context menu for tabs"""
+        tab_bar = self.tab_widget.tabBar()
+        index = tab_bar.tabAt(position)
+        
+        if index >= 0:
+            menu = QMenu(self)
+            close_action = QAction("Close Tab", self)
+            close_action.triggered.connect(lambda: self.close_tab(index))
+            menu.addAction(close_action)
+            
+            close_others_action = QAction("Close Other Tabs", self)
+            close_others_action.triggered.connect(lambda: self.close_other_tabs(index))
+            menu.addAction(close_others_action)
+            
+            close_all_action = QAction("Close All Tabs", self)
+            close_all_action.triggered.connect(self.close_all_tabs)
+            menu.addAction(close_all_action)
+            
+            menu.exec(tab_bar.mapToGlobal(position))
+    
+    def close_other_tabs(self, keep_index: int):
+        """Close all tabs except the specified one"""
+        # Close tabs in reverse order to maintain indices
+        for i in range(self.tab_widget.count() - 1, -1, -1):
+            if i != keep_index:
+                self.close_tab(i)
+    
+    def close_all_tabs(self):
+        """Close all tabs"""
+        while self.tab_widget.count() > 0:
+            self.close_tab(0)
     
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Handle drag enter event for drag and drop"""
@@ -245,16 +494,12 @@ class BSRExplorer(QMainWindow):
             event.acceptProposedAction()
     
     def dropEvent(self, event: QDropEvent):
-        """Handle drop event for drag and drop"""
+        """Handle drop event for drag and drop - opens new tab"""
         urls = event.mimeData().urls()
-        if urls:
-            filename = urls[0].toLocalFile()
-            self.load_file(filename)
-    
-    def resizeEvent(self, event):
-        """Handle window resize to auto-adjust plots"""
-        super().resizeEvent(event)
-        # Plots automatically resize with splitter
+        for url in urls:
+            filename = url.toLocalFile()
+            if filename.lower().endswith('.bsr') or filename:
+                self.add_file_tab(filename)
 
 
 def main():

@@ -6,12 +6,17 @@ A portable, fast, and optimized viewer for BSR (Binary Signal Recording) files.
 
 - **Fast Loading**: Efficiently handles large files (~500 MB) using memory-mapped files
 - **Multi-Channel Visualization**: View all 4 channels simultaneously or exploded into separate plots
+- **Multiple File Tabs**: Open and compare multiple BSR files in tabs
+- **Configurable Channels**: Rename channels and adjust sample rate (Settings menu)
 - **Modern UI**: 
   - Zoom and pan with mouse wheel and drag
   - Pinch-to-zoom support on touchscreens
   - Auto-resize plots with window
-- **Drag and Drop**: Simply drag a BSR file into the window
+  - Linked time axis in exploded view
+- **Drag and Drop**: Drag BSR files into the window to open new tabs
 - **Channel Control**: Toggle individual channels on/off
+- **Tab Management**: Right-click on tabs to close individual or multiple tabs
+- **Persistent Settings**: Channel names and sample rate stored in OS-specific directory
 - **High Performance**: Downsampling for initial display, OpenGL acceleration
 - **Extensible Architecture**: Modular design for adding filters and processing
 
@@ -47,8 +52,24 @@ Download the latest release for your platform from the [Releases](../../releases
 
 ### Opening Files
 
-1. **Drag and Drop**: Drag a `.bsr` file into the application window
-2. **File Menu**: Click "Open File" button and select a BSR file
+1. **Drag and Drop**: Drag one or more `.bsr` files into the application window to open them in new tabs
+2. **File Menu**: Use File → Open File (Ctrl+O) to select a BSR file
+
+### Multiple Files
+
+- **Tabs**: Each file opens in its own tab
+- **Switch Files**: Click on tabs to switch between files
+- **Close Tabs**: Click the X on a tab or right-click for more options:
+  - Close Tab
+  - Close Other Tabs
+  - Close All Tabs
+
+### Settings
+
+Access Settings → Configure Channels & Sample Rate to:
+- **Rename Channels**: Default names are SSC, FL1, FL2, SSC
+- **Adjust Sample Rate**: Change from default 200 kHz
+- Settings are automatically saved to your OS-specific application data directory
 
 ### Navigation
 
@@ -59,11 +80,15 @@ Download the latest release for your platform from the [Releases](../../releases
 ### View Modes
 
 - **Combined View**: All 4 channels in one plot with different colors
-- **Exploded View**: Check "Explode into 4 Plots" to see each channel in a separate, resizable plot
+- **Exploded View**: Check "Explode into 4 Plots" to see each channel in a separate plot
+  - Time axis is synchronized across all plots (zoom/pan together)
+  - Amplitude axis is independent for each plot
+  - Plots are resizable using the splitter handles
 
 ### Channel Control
 
-- Use the Ch1-Ch4 checkboxes to show/hide individual channels
+- Use the channel checkboxes (default: SSC, FL1, FL2, SSC) to show/hide individual channels
+- Channel names can be customized in Settings
 
 ## Architecture
 
