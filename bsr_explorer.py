@@ -1,22 +1,118 @@
 """
 BSR Explorer - Main Application
 A portable, fast, and optimized viewer for BSR binary files
+
+Version: 1.0.0
+Author: Adrian Shajkofci
+License: MIT
 """
 import sys
 import os
 import json
+import subprocess
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, 
     QHBoxLayout, QPushButton, QLabel, QFileDialog, 
     QSplitter, QCheckBox, QGroupBox, QTabWidget, QMenu,
-    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMenuBar
+    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMenuBar,
+    QMessageBox, QTextEdit
 )
 from PyQt6.QtCore import Qt, QMimeData, QStandardPaths
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QAction
 import pyqtgraph as pg
 import numpy as np
 from bsr_reader import BSRReader
+
+__version__ = "1.0.0"
+__author__ = "Adrian Shajkofci"
+__license__ = "MIT"
+
+
+def get_git_version():
+    """Get the git commit hash if available"""
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            capture_output=True,
+            text=True,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+class AboutDialog(QDialog):
+    """About dialog showing version, author, and license"""
+    
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("About BSR Explorer")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
+        
+        layout = QVBoxLayout(self)
+        
+        # Title
+        title = QLabel("<h2>BSR Explorer</h2>")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        # Version info
+        git_version = get_git_version()
+        version_text = f"Version {__version__}"
+        if git_version:
+            version_text += f" (git: {git_version})"
+        
+        version_label = QLabel(version_text)
+        version_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(version_label)
+        
+        # Author
+        author_label = QLabel(f"<b>Author:</b> {__author__}")
+        author_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(author_label)
+        
+        layout.addSpacing(20)
+        
+        # License
+        license_label = QLabel("<b>License:</b>")
+        layout.addWidget(license_label)
+        
+        # License text
+        license_text = QTextEdit()
+        license_text.setReadOnly(True)
+        license_text.setPlainText("""MIT License
+
+Copyright (c) 2026 Adrian Shajkofci
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.""")
+        layout.addWidget(license_text)
+        
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
 
 
 class SettingsDialog(QDialog):
@@ -138,10 +234,12 @@ class FileTab(QWidget):
     
     def setup_plots(self):
         """Setup plot widgets"""
-        # Clear existing plots
-        for plot in self.plots:
-            self.plot_splitter.removeWidget(plot)
-            plot.deleteLater()
+        # Clear existing plots - properly remove from QSplitter
+        while self.plot_splitter.count() > 0:
+            widget = self.plot_splitter.widget(0)
+            self.plot_splitter.widget(0).setParent(None)
+            if widget:
+                widget.deleteLater()
         self.plots.clear()
         self.plot_items.clear()
         
@@ -162,6 +260,8 @@ class FileTab(QWidget):
                 # Link X axis to first plot (time axis locked together)
                 if first_plot is None:
                     first_plot = plot_widget
+                    # Connect view range change to update data dynamically
+                    plot_widget.sigRangeChanged.connect(lambda: self.on_view_range_changed())
                 else:
                     plot_widget.setXLink(first_plot)
                 
@@ -182,6 +282,9 @@ class FileTab(QWidget):
             
             # Enable mouse interaction
             plot_widget.setMouseEnabled(x=True, y=True)
+            
+            # Connect view range change to update data dynamically
+            plot_widget.sigRangeChanged.connect(lambda: self.on_view_range_changed())
             
             colors = ['r', 'g', 'b', 'y']
             for i in range(4):
@@ -288,6 +391,43 @@ class FileTab(QWidget):
             channel_data = channel_data[::step]
         
         self.plot_items[channel_idx].setData(time_axis, channel_data)
+    
+    def on_view_range_changed(self):
+        """Handle view range changes to dynamically resample data"""
+        if self.reader.data is None or len(self.plots) == 0:
+            return
+        
+        # Get the view range from the first plot (they're all linked)
+        plot = self.plots[0]
+        view_range = plot.viewRange()
+        x_range = view_range[0]  # [min_time, max_time]
+        
+        # Calculate which data points are visible
+        time_axis_full = self.reader.get_time_axis()
+        num_samples = len(time_axis_full)
+        
+        # Find indices for visible range
+        start_idx = max(0, int(x_range[0] * self.reader.sample_rate))
+        end_idx = min(num_samples, int(x_range[1] * self.reader.sample_rate))
+        
+        # Calculate how many points are in the visible range
+        visible_samples = end_idx - start_idx
+        
+        # Dynamically adjust downsampling based on visible range
+        max_display_samples = 100000
+        if visible_samples > max_display_samples:
+            step = visible_samples // max_display_samples
+        else:
+            step = 1
+        
+        # Update plots with appropriate data resolution
+        time_slice = time_axis_full[start_idx:end_idx:step]
+        
+        for i in range(4):
+            if self.channel_checkboxes[i].isChecked():
+                channel_data = self.reader.get_channel(i)
+                data_slice = channel_data[start_idx:end_idx:step]
+                self.plot_items[i].setData(time_slice, data_slice)
 
 
 class BSRExplorer(QMainWindow):
@@ -388,6 +528,18 @@ class BSRExplorer(QMainWindow):
         config_action = QAction("&Configure Channels && Sample Rate", self)
         config_action.triggered.connect(self.show_settings_dialog)
         settings_menu.addAction(config_action)
+        
+        # Help menu
+        help_menu = menubar.addMenu("&Help")
+        
+        about_action = QAction("&About", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
+    
+    def show_about_dialog(self):
+        """Show the about dialog"""
+        dialog = AboutDialog(self)
+        dialog.exec()
     
     def show_settings_dialog(self):
         """Show the settings dialog"""

@@ -2,12 +2,17 @@
 
 A portable, fast, and optimized viewer for BSR (Binary Signal Recording) files.
 
+**Version:** 1.0.0  
+**Author:** Adrian Shajkofci  
+**License:** MIT
+
 ## Features
 
 - **Fast Loading**: Efficiently handles large files (~500 MB) using memory-mapped files
 - **Multi-Channel Visualization**: View all 4 channels simultaneously or exploded into separate plots
 - **Multiple File Tabs**: Open and compare multiple BSR files in tabs
 - **Configurable Channels**: Rename channels and adjust sample rate (Settings menu)
+- **Dynamic Data Resolution**: Automatically adjusts data resolution when zooming - full data when zoomed in
 - **Modern UI**: 
   - Zoom and pan with mouse wheel and drag
   - Pinch-to-zoom support on touchscreens
@@ -17,14 +22,14 @@ A portable, fast, and optimized viewer for BSR (Binary Signal Recording) files.
 - **Channel Control**: Toggle individual channels on/off
 - **Tab Management**: Right-click on tabs to close individual or multiple tabs
 - **Persistent Settings**: Channel names and sample rate stored in OS-specific directory
-- **High Performance**: Downsampling for initial display, OpenGL acceleration
+- **High Performance**: Dynamic downsampling based on zoom level, OpenGL acceleration
 - **Extensible Architecture**: Modular design for adding filters and processing
 
 ## File Format
 
 BSR files are binary files containing:
 - **Format**: Nx4 int32 samples
-- **Sample Rate**: 200 kHz
+- **Sample Rate**: 200 kHz (configurable)
 - **Channels**: 4 channels per sample
 
 ## Installation
@@ -69,13 +74,17 @@ Download the latest release for your platform from the [Releases](../../releases
 Access Settings → Configure Channels & Sample Rate to:
 - **Rename Channels**: Default names are SSC, FL1, FL2, SSC
 - **Adjust Sample Rate**: Change from default 200 kHz
-- Settings are automatically saved to your OS-specific application data directory
+- Settings are automatically saved to your OS-specific application data directory:
+  - Windows: `%APPDATA%\BSRExplorer\settings.json`
+  - macOS: `~/Library/Application Support/BSRExplorer/settings.json`
+  - Linux: `~/.local/share/BSRExplorer/settings.json`
 
 ### Navigation
 
 - **Zoom**: Mouse wheel or pinch gesture
 - **Pan**: Click and drag on the plot
 - **Reset View**: Double-click on the plot
+- **Dynamic Resolution**: When you zoom in, the application automatically fetches full-resolution data for the visible range
 
 ### View Modes
 
@@ -90,6 +99,14 @@ Access Settings → Configure Channels & Sample Rate to:
 - Use the channel checkboxes (default: SSC, FL1, FL2, SSC) to show/hide individual channels
 - Channel names can be customized in Settings
 
+### About
+
+Access Help → About to view:
+- Application version
+- Git commit hash (if running from source)
+- Author information
+- MIT License text
+
 ## Architecture
 
 The application is designed with modularity in mind:
@@ -97,7 +114,16 @@ The application is designed with modularity in mind:
 ```
 bsr_explorer.py      # Main GUI application (PyQt6)
 bsr_reader.py        # Data loading and file I/O
+LICENSE              # MIT License
 ```
+
+### Key Components
+
+- **BSRExplorer**: Main window managing tabs and menus
+- **FileTab**: Individual file view (one per tab)
+- **SettingsDialog**: Configuration dialog for channels and sample rate
+- **AboutDialog**: Application information and license
+- **BSRReader**: Memory-mapped file I/O
 
 ### Extending the Application
 
@@ -119,9 +145,12 @@ The architecture supports extending beyond 4 channels. Modify the `num_channels`
 ## Performance Optimization
 
 - **Memory Mapping**: Large files are memory-mapped for efficient loading
-- **Downsampling**: Initial display shows downsampled data (max 100k points)
+- **Dynamic Downsampling**: Automatically adjusts resolution based on zoom level
+  - Initial view: downsampled to max 100k points
+  - Zoomed in: full resolution data for visible range
 - **OpenGL**: Hardware-accelerated rendering via pyqtgraph
 - **Lazy Loading**: Only active channels are processed
+- **View-based Updates**: Data resolution adapts to current view range
 
 ## Development
 
@@ -156,8 +185,34 @@ data.tofile('sample.bsr')
 
 ## License
 
-See LICENSE file for details.
+MIT License
+
+Copyright (c) 2026 Adrian Shajkofci
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Author
+
+**Adrian Shajkofci**
+
+For questions, issues, or feature requests, please use the GitHub issue tracker.
