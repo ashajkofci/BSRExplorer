@@ -1,0 +1,93 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            artifact_name: BSRExplorer-Windows
+            asset_name: BSRExplorer-Windows.zip
+          - os: ubuntu-latest
+            artifact_name: BSRExplorer-Linux
+            asset_name: BSRExplorer-Linux.tar.gz
+          - os: macos-latest
+            artifact_name: BSRExplorer-macOS
+            asset_name: BSRExplorer-macOS.zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Build executable (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        pyinstaller --onefile --windowed --name BSRExplorer --icon=NONE bsr_explorer.py
+        cd dist
+        Compress-Archive -Path BSRExplorer.exe -DestinationPath ../BSRExplorer-Windows.zip
+      shell: pwsh
+
+    - name: Build executable (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb-xinerama0 libxcb-cursor0
+        pyinstaller --onefile --windowed --name BSRExplorer bsr_explorer.py
+        cd dist
+        tar -czf ../BSRExplorer-Linux.tar.gz BSRExplorer
+
+    - name: Build executable (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        pyinstaller --onefile --windowed --name BSRExplorer bsr_explorer.py
+        cd dist
+        zip -r ../BSRExplorer-macOS.zip BSRExplorer
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: ${{ matrix.asset_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          artifacts/BSRExplorer-Windows/BSRExplorer-Windows.zip
+          artifacts/BSRExplorer-Linux/BSRExplorer-Linux.tar.gz
+          artifacts/BSRExplorer-macOS/BSRExplorer-macOS.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
