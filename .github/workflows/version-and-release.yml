@@ -20,6 +20,7 @@ jobs:
       contents: write
     outputs:
       new_version: ${{ steps.bump.outputs.new_version }}
+      commit_sha: ${{ steps.bump.outputs.commit_sha }}
     
     steps:
     - name: Checkout code
@@ -35,16 +36,14 @@ jobs:
     
     - name: Bump version
       id: bump
+      shell: bash
       run: |
-        # Read current version from bsr_explorer.py
-        CURRENT_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' bsr_explorer.py)
+        # Read current version
+        CURRENT_VERSION=$(grep '__version__ = ' bsr_explorer.py | cut -d'"' -f2)
         echo "Current version: $CURRENT_VERSION"
         
         # Split version into parts
-        IFS='.' read -r -a VERSION_PARTS <<< "$CURRENT_VERSION"
-        MAJOR="${VERSION_PARTS[0]}"
-        MINOR="${VERSION_PARTS[1]}"
-        PATCH="${VERSION_PARTS[2]}"
+        IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
         
         # Increment based on input
         case "${{ github.event.inputs.version_bump }}" in
@@ -81,6 +80,10 @@ jobs:
         git add bsr_explorer.py README.md
         git commit -m "Bump version to $NEW_VERSION"
         
+        # Get commit SHA before pushing
+        COMMIT_SHA=$(git rev-parse HEAD)
+        echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+        
         # Create and push tag
         git tag -a "v$NEW_VERSION" -m "Release version $NEW_VERSION"
         git push origin HEAD:${{ github.ref_name }}
@@ -110,7 +113,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        ref: v${{ needs.increment-version.outputs.new_version }}
+        ref: ${{ needs.increment-version.outputs.commit_sha }}
 
     - name: Set up Python
       uses: actions/setup-python@v5
