@@ -252,10 +252,9 @@ class FileTab(QWidget):
             # Create 4 separate plots in the same window with linked X axis
             colors = ['r', 'g', 'b', 'y']
             first_plot = None
+            num_channels = len(self.channel_names)
             
-            print(f"Creating {4} exploded plots...")  # Debug
-            
-            for i in range(4):
+            for i in range(num_channels):
                 plot_widget = pg.PlotWidget(title=self.channel_names[i])
                 plot_widget.setLabel('left', 'Amplitude')
                 plot_widget.setLabel('bottom', 'Time', units='s')
@@ -282,9 +281,6 @@ class FileTab(QWidget):
                 # Ensure plot is visible based on checkbox state
                 is_checked = self.channel_checkboxes[i].isChecked()
                 plot_widget.setVisible(is_checked)
-                print(f"  Plot {i+1} created, visible={is_checked}")  # Debug
-            
-            print(f"Total plots created: {len(self.plots)}, plot_items: {len(self.plot_items)}")  # Debug
         else:
             # Create single combined plot
             plot_widget = pg.PlotWidget(title="All Channels")
@@ -341,13 +337,16 @@ class FileTab(QWidget):
     
     def load_file(self, filename: str):
         """Load and display BSR file"""
-        # Create progress dialog
-        progress = QProgressDialog("Loading BSR file...", None, 0, 100, self)
+        # Create progress dialog with cancel button
+        progress = QProgressDialog("Loading BSR file...", "Cancel", 0, 100, self)
         progress.setWindowTitle("Loading")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(10)
         QApplication.processEvents()
+        
+        if progress.wasCanceled():
+            return
         
         self.info_label.setText(f"Loading {os.path.basename(filename)}...")
         QApplication.processEvents()
@@ -357,13 +356,22 @@ class FileTab(QWidget):
         progress.setLabelText("Reading file data...")
         QApplication.processEvents()
         
+        if progress.wasCanceled():
+            return
+        
         if self.reader.load_file(filename):
+            if progress.wasCanceled():
+                return
+                
             progress.setValue(60)
             progress.setLabelText("Processing data...")
             QApplication.processEvents()
             
             self.update_info_label()
             
+            if progress.wasCanceled():
+                return
+                
             progress.setValue(80)
             progress.setLabelText("Updating plots...")
             QApplication.processEvents()
@@ -511,8 +519,6 @@ class FileTab(QWidget):
         # Update last range before resampling
         self.last_x_range = x_range
         
-        print(f"Zoom detected: range size = {current_range_size:.6f}s")  # Debug
-        
         # Calculate which data points are visible
         time_axis_full = self.reader.get_time_axis()
         num_samples = len(time_axis_full)
@@ -527,8 +533,6 @@ class FileTab(QWidget):
         if visible_samples <= 0:
             return
         
-        print(f"Visible samples: {visible_samples}, Full samples: {num_samples}")  # Debug
-        
         # Dynamically adjust downsampling based on visible range
         max_display_samples = 100000
         
@@ -539,7 +543,6 @@ class FileTab(QWidget):
                 
                 if visible_samples > max_display_samples:
                     # Use histogram-based downsampling to preserve extrema
-                    print(f"Downsampling channel {i+1}...")  # Debug
                     time_slice = time_axis_full[start_idx:end_idx]
                     data_slice = channel_data[start_idx:end_idx]
                     time_down, data_down = self.histogram_downsample(
@@ -548,7 +551,6 @@ class FileTab(QWidget):
                     self.plot_items[i].setData(time_down, data_down)
                 else:
                     # Show full resolution
-                    print(f"Full resolution channel {i+1}: {visible_samples} points")  # Debug
                     time_slice = time_axis_full[start_idx:end_idx]
                     data_slice = channel_data[start_idx:end_idx]
                     self.plot_items[i].setData(time_slice, data_slice)
