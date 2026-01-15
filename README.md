@@ -12,7 +12,10 @@ A portable, fast, and optimized viewer for BSR (Binary Signal Recording) files.
 - **Multi-Channel Visualization**: View all 4 channels simultaneously or exploded into separate plots
 - **Multiple File Tabs**: Open and compare multiple BSR files in tabs
 - **Configurable Channels**: Rename channels and adjust sample rate (Settings menu)
-- **Dynamic Data Resolution**: Automatically adjusts data resolution when zooming - full data when zoomed in
+- **Smart Downsampling**: 
+  - Histogram-based algorithm preserves signal extrema (peaks and troughs)
+  - Only resamples on zoom (not pan) for smooth navigation
+  - Automatically shows full resolution when zoomed in
 - **Modern UI**: 
   - Zoom and pan with mouse wheel and drag
   - Pinch-to-zoom support on touchscreens
@@ -145,12 +148,14 @@ The architecture supports extending beyond 4 channels. Modify the `num_channels`
 ## Performance Optimization
 
 - **Memory Mapping**: Large files are memory-mapped for efficient loading
-- **Dynamic Downsampling**: Automatically adjusts resolution based on zoom level
-  - Initial view: downsampled to max 100k points
-  - Zoomed in: full resolution data for visible range
+- **Smart Downsampling**: Histogram-based algorithm that:
+  - Preserves extrema (min/max) from each data bin
+  - Only resamples on zoom operations (not pan)
+  - Automatically switches to full resolution when zoomed in
+  - Keeps important signal features (peaks and troughs)
 - **OpenGL**: Hardware-accelerated rendering via pyqtgraph
 - **Lazy Loading**: Only active channels are processed
-- **View-based Updates**: Data resolution adapts to current view range
+- **View-based Updates**: Data resolution adapts to zoom level
 
 ## Development
 
