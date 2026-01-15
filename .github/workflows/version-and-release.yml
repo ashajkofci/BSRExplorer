@@ -65,12 +65,12 @@ jobs:
         echo "New version: $NEW_VERSION"
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         
-        # Update version in bsr_explorer.py
-        sed -i "s/Version: $CURRENT_VERSION/Version: $NEW_VERSION/" bsr_explorer.py
-        sed -i "s/__version__ = \"$CURRENT_VERSION\"/__version__ = \"$NEW_VERSION\"/" bsr_explorer.py
+        # Update version in bsr_explorer.py (target specific lines)
+        sed -i "s/^Version: $CURRENT_VERSION$/Version: $NEW_VERSION/" bsr_explorer.py
+        sed -i "s/^__version__ = \"$CURRENT_VERSION\"$/__version__ = \"$NEW_VERSION\"/" bsr_explorer.py
         
-        # Update version in README.md
-        sed -i "s/\*\*Version:\*\* $CURRENT_VERSION/**Version:** $NEW_VERSION/" README.md
+        # Update version in README.md (escape asterisks properly)
+        sed -i "s/^\*\*Version:\*\* $CURRENT_VERSION$/\*\*Version:\*\* $NEW_VERSION/" README.md
         
         # Configure git
         git config user.name "github-actions[bot]"
