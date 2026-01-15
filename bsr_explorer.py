@@ -448,7 +448,8 @@ class BSRExplorer(QMainWindow):
         """Close a tab"""
         widget = self.tab_widget.widget(index)
         if isinstance(widget, FileTab):
-            widget.reader.close()
+            if hasattr(widget.reader, 'close'):
+                widget.reader.close()
         self.tab_widget.removeTab(index)
         
         # Show welcome screen if no tabs left
@@ -498,7 +499,7 @@ class BSRExplorer(QMainWindow):
         urls = event.mimeData().urls()
         for url in urls:
             filename = url.toLocalFile()
-            if filename.lower().endswith('.bsr') or filename:
+            if filename and (filename.lower().endswith('.bsr') or True):  # Accept all files for now
                 self.add_file_tab(filename)
 
 
