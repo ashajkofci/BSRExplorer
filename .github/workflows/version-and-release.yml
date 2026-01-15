@@ -71,7 +71,7 @@ jobs:
         sed -i "s/__version__ = \"$CURRENT_VERSION\"/__version__ = \"$NEW_VERSION\"/" bsr_explorer.py
         
         # Update version in README.md
-        sed -i "s/Version:** $CURRENT_VERSION/Version:** $NEW_VERSION/" README.md
+        sed -i "s/\*\*Version:\*\* $CURRENT_VERSION/**Version:** $NEW_VERSION/" README.md
         
         # Configure git
         git config user.name "github-actions[bot]"
