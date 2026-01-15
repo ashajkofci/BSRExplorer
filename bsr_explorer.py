@@ -407,11 +407,15 @@ class FileTab(QWidget):
         Returns:
             Tuple of (downsampled_time, downsampled_data)
         """
-        if len(data) <= target_samples:
+        if len(data) <= target_samples or target_samples <= 0:
             return time_axis, data
         
-        # Calculate bin size
-        bin_size = len(data) // target_samples
+        # Calculate bin size - use target_samples // 2 since we keep 2 points per bin
+        num_bins = max(1, target_samples // 2)
+        bin_size = len(data) // num_bins
+        
+        if bin_size <= 0:
+            return time_axis, data
         
         downsampled_time = []
         downsampled_data = []
@@ -428,13 +432,18 @@ class FileTab(QWidget):
             min_idx = np.argmin(bin_data)
             max_idx = np.argmax(bin_data)
             
-            # Add min and max in time order
-            if min_idx < max_idx:
-                downsampled_time.extend([bin_time[min_idx], bin_time[max_idx]])
-                downsampled_data.extend([bin_data[min_idx], bin_data[max_idx]])
+            # If min and max are the same (constant bin), only add once
+            if min_idx == max_idx:
+                downsampled_time.append(bin_time[min_idx])
+                downsampled_data.append(bin_data[min_idx])
             else:
-                downsampled_time.extend([bin_time[max_idx], bin_time[min_idx]])
-                downsampled_data.extend([bin_data[max_idx], bin_data[min_idx]])
+                # Add min and max in time order
+                if min_idx < max_idx:
+                    downsampled_time.extend([bin_time[min_idx], bin_time[max_idx]])
+                    downsampled_data.extend([bin_data[min_idx], bin_data[max_idx]])
+                else:
+                    downsampled_time.extend([bin_time[max_idx], bin_time[min_idx]])
+                    downsampled_data.extend([bin_data[max_idx], bin_data[min_idx]])
         
         return np.array(downsampled_time), np.array(downsampled_data)
     
@@ -455,7 +464,7 @@ class FileTab(QWidget):
             last_range_size = self.last_x_range[1] - self.last_x_range[0]
             # Only update if zoom changed (range size changed significantly)
             # Use 1% threshold to avoid floating point comparison issues
-            if abs(current_range_size - last_range_size) / last_range_size < 0.01:
+            if last_range_size > 0 and abs(current_range_size - last_range_size) / last_range_size < 0.01:
                 # This is just a pan, not a zoom - don't resample
                 self.last_x_range = x_range
                 return
