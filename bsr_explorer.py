@@ -319,7 +319,7 @@ class FileTab(QWidget):
     
     def toggle_view_mode(self, state):
         """Toggle between combined and exploded view"""
-        self.exploded_mode = (state == Qt.CheckState.Checked)
+        self.exploded_mode = (state == Qt.CheckState.Checked.value)
         self.setup_plots()
         
         # Reload data if available
@@ -329,7 +329,7 @@ class FileTab(QWidget):
     def toggle_channel(self, channel_idx: int, state):
         """Toggle visibility of a specific channel"""
         if channel_idx < len(self.plot_items):
-            visible = (state == Qt.CheckState.Checked)
+            visible = (state == Qt.CheckState.Checked.value)
             
             if self.exploded_mode and channel_idx < len(self.plots):
                 # In exploded mode, show/hide entire plot widget
