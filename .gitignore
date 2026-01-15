@@ -49,5 +49,8 @@ tmp/
 
 # Test files
 sample.bsr
+large_sample.bsr
 create_sample.py
+create_large_sample.py
 test_reader.py
+test_ui.py

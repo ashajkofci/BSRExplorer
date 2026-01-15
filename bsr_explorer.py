@@ -137,7 +137,7 @@ class BSRExplorer(QMainWindow):
     
     def toggle_view_mode(self, state):
         """Toggle between combined and exploded view"""
-        self.exploded_mode = (state == Qt.CheckState.Checked.value)
+        self.exploded_mode = (state == Qt.CheckState.Checked)
         self.setup_plots()
         
         # Reload data if available
@@ -147,7 +147,7 @@ class BSRExplorer(QMainWindow):
     def toggle_channel(self, channel_idx: int, state):
         """Toggle visibility of a specific channel"""
         if channel_idx < len(self.plot_items):
-            visible = (state == Qt.CheckState.Checked.value)
+            visible = (state == Qt.CheckState.Checked)
             
             if self.exploded_mode and channel_idx < len(self.plots):
                 self.plots[channel_idx].setVisible(visible)
