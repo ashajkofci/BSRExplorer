@@ -118,7 +118,7 @@ SOFTWARE.""")
 class SettingsDialog(QDialog):
     """Dialog for configuring channel names and sample rate"""
     
-    def __init__(self, parent, channel_names, sample_rate):
+    def __init__(self, parent, channel_names, sample_rate, max_display_samples):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
@@ -136,6 +136,10 @@ class SettingsDialog(QDialog):
         self.sample_rate_input = QLineEdit(str(sample_rate))
         layout.addRow("Sample Rate (Hz):", self.sample_rate_input)
         
+        # Max display samples input
+        self.max_samples_input = QLineEdit(str(max_display_samples))
+        layout.addRow("Max Visible Samples:", self.max_samples_input)
+        
         # Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | 
@@ -152,7 +156,11 @@ class SettingsDialog(QDialog):
             sample_rate = int(self.sample_rate_input.text())
         except ValueError:
             sample_rate = 200000  # Default
-        return channel_names, sample_rate
+        try:
+            max_samples = int(self.max_samples_input.text())
+        except ValueError:
+            max_samples = 100000  # Default
+        return channel_names, sample_rate, max_samples
 
 
 class FileTab(QWidget):
@@ -170,6 +178,7 @@ class FileTab(QWidget):
         self.channel_names = channel_names
         self.range_change_connected = False  # Track if signal is connected
         self.last_x_range = None  # Track last X range to detect zoom vs pan
+        self.max_display_samples = 100000  # Configurable max samples
         
         self.init_ui()
         self.load_file(filename)
@@ -405,17 +414,16 @@ class FileTab(QWidget):
         
         # For large files, downsample for initial view using histogram method
         num_samples = len(time_axis)
-        max_display_samples = 100000  # Display max 100k points initially
         
         # Update each channel
         for i in range(4):
-            if self.channel_checkboxes[i].isChecked():
+            if i < len(self.channel_checkboxes) and self.channel_checkboxes[i].isChecked():
                 channel_data = self.reader.get_channel(i)
                 
-                if num_samples > max_display_samples:
+                if num_samples > self.max_display_samples:
                     # Use histogram-based downsampling
                     time_down, data_down = self.histogram_downsample(
-                        channel_data, time_axis, max_display_samples
+                        channel_data, time_axis, self.max_display_samples
                     )
                     self.plot_items[i].setData(time_down, data_down)
                 else:
@@ -430,21 +438,26 @@ class FileTab(QWidget):
         time_axis = self.reader.get_time_axis()
         channel_data = self.reader.get_channel(channel_idx)
         num_samples = len(time_axis)
-        max_display_samples = 100000
         
-        if num_samples > max_display_samples:
+        if num_samples > self.max_display_samples:
             # Use histogram-based downsampling
             time_down, data_down = self.histogram_downsample(
-                channel_data, time_axis, max_display_samples
+                channel_data, time_axis, self.max_display_samples
             )
             self.plot_items[channel_idx].setData(time_down, data_down)
         else:
             # Show full resolution
             self.plot_items[channel_idx].setData(time_axis, channel_data)
     
+    def update_max_display_samples(self, max_samples):
+        """Update max display samples setting"""
+        self.max_display_samples = max_samples
+        if self.reader.data is not None:
+            self.update_plots()
+    
     def histogram_downsample(self, data, time_axis, target_samples):
         """
-        Downsample data using histogram-based approach that preserves extrema.
+        Fast vectorized downsampling using histogram-based approach that preserves extrema.
         
         Args:
             data: Channel data to downsample
@@ -464,33 +477,42 @@ class FileTab(QWidget):
         if bin_size <= 0:
             return time_axis, data
         
+        # Truncate data to fit evenly into bins for vectorization
+        n_samples = num_bins * bin_size
+        data_truncated = data[:n_samples]
+        time_truncated = time_axis[:n_samples]
+        
+        # Reshape into bins for vectorized operations
+        data_bins = data_truncated.reshape(num_bins, bin_size)
+        time_bins = time_truncated.reshape(num_bins, bin_size)
+        
+        # Find min and max indices in each bin (vectorized)
+        min_indices = np.argmin(data_bins, axis=1)
+        max_indices = np.argmax(data_bins, axis=1)
+        
+        # Extract min and max values and times
+        bin_range = np.arange(num_bins)
+        min_data = data_bins[bin_range, min_indices]
+        max_data = data_bins[bin_range, max_indices]
+        min_time = time_bins[bin_range, min_indices]
+        max_time = time_bins[bin_range, max_indices]
+        
+        # Interleave min and max in time order
+        # Stack and sort by time for each bin
         downsampled_time = []
         downsampled_data = []
         
-        for i in range(0, len(data), bin_size):
-            end_idx = min(i + bin_size, len(data))
-            bin_data = data[i:end_idx]
-            bin_time = time_axis[i:end_idx]
-            
-            if len(bin_data) == 0:
-                continue
-            
-            # Keep extrema (min and max) from each bin
-            min_idx = np.argmin(bin_data)
-            max_idx = np.argmax(bin_data)
-            
-            # If min and max are the same (constant bin), only add once
-            if min_idx == max_idx:
-                downsampled_time.append(bin_time[min_idx])
-                downsampled_data.append(bin_data[min_idx])
+        for i in range(num_bins):
+            if min_indices[i] == max_indices[i]:
+                # Constant bin, add once
+                downsampled_time.append(min_time[i])
+                downsampled_data.append(min_data[i])
+            elif min_indices[i] < max_indices[i]:
+                downsampled_time.extend([min_time[i], max_time[i]])
+                downsampled_data.extend([min_data[i], max_data[i]])
             else:
-                # Add min and max in time order
-                if min_idx < max_idx:
-                    downsampled_time.extend([bin_time[min_idx], bin_time[max_idx]])
-                    downsampled_data.extend([bin_data[min_idx], bin_data[max_idx]])
-                else:
-                    downsampled_time.extend([bin_time[max_idx], bin_time[min_idx]])
-                    downsampled_data.extend([bin_data[max_idx], bin_data[min_idx]])
+                downsampled_time.extend([max_time[i], min_time[i]])
+                downsampled_data.extend([max_data[i], min_data[i]])
         
         return np.array(downsampled_time), np.array(downsampled_data)
     
@@ -523,9 +545,14 @@ class FileTab(QWidget):
         time_axis_full = self.reader.get_time_axis()
         num_samples = len(time_axis_full)
         
-        # Find indices for visible range
-        start_idx = max(0, int(x_range[0] * self.reader.sample_rate))
-        end_idx = min(num_samples, int(x_range[1] * self.reader.sample_rate))
+        # Expand range by 2x on each side for better context
+        range_margin = current_range_size  # Add 1x range on each side (total 3x)
+        expanded_start = x_range[0] - range_margin
+        expanded_end = x_range[1] + range_margin
+        
+        # Find indices for expanded range
+        start_idx = max(0, int(expanded_start * self.reader.sample_rate))
+        end_idx = min(num_samples, int(expanded_end * self.reader.sample_rate))
         
         # Calculate how many points are in the visible range
         visible_samples = end_idx - start_idx
@@ -533,20 +560,17 @@ class FileTab(QWidget):
         if visible_samples <= 0:
             return
         
-        # Dynamically adjust downsampling based on visible range
-        max_display_samples = 100000
-        
         # Update plots with appropriate data resolution
         for i in range(4):
-            if self.channel_checkboxes[i].isChecked():
+            if i < len(self.channel_checkboxes) and self.channel_checkboxes[i].isChecked():
                 channel_data = self.reader.get_channel(i)
                 
-                if visible_samples > max_display_samples:
+                if visible_samples > self.max_display_samples:
                     # Use histogram-based downsampling to preserve extrema
                     time_slice = time_axis_full[start_idx:end_idx]
                     data_slice = channel_data[start_idx:end_idx]
                     time_down, data_down = self.histogram_downsample(
-                        data_slice, time_slice, max_display_samples
+                        data_slice, time_slice, self.max_display_samples
                     )
                     self.plot_items[i].setData(time_down, data_down)
                 else:
@@ -561,8 +585,9 @@ class BSRExplorer(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.channel_names = ["SSC", "FL1", "FL2", "FSC"]  # Default names
+        self.channel_names = ["SSC", "FL1", "FL2", "SSC"]  # Default names (fixed last one)
         self.sample_rate = 200000  # Default 200 kHz
+        self.max_display_samples = 100000  # Default max visible samples
         self.load_settings()
         
         self.init_ui()
@@ -585,6 +610,7 @@ class BSRExplorer(QMainWindow):
                     settings = json.load(f)
                     self.channel_names = settings.get('channel_names', self.channel_names)
                     self.sample_rate = settings.get('sample_rate', self.sample_rate)
+                    self.max_display_samples = settings.get('max_display_samples', self.max_display_samples)
         except Exception as e:
             print(f"Could not load settings: {e}")
     
@@ -594,7 +620,8 @@ class BSRExplorer(QMainWindow):
             settings_path = self.get_settings_path()
             settings = {
                 'channel_names': self.channel_names,
-                'sample_rate': self.sample_rate
+                'sample_rate': self.sample_rate,
+                'max_display_samples': self.max_display_samples
             }
             with open(settings_path, 'w') as f:
                 json.dump(settings, f, indent=2)
@@ -669,9 +696,9 @@ class BSRExplorer(QMainWindow):
     
     def show_settings_dialog(self):
         """Show the settings dialog"""
-        dialog = SettingsDialog(self, self.channel_names, self.sample_rate)
+        dialog = SettingsDialog(self, self.channel_names, self.sample_rate, self.max_display_samples)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.channel_names, self.sample_rate = dialog.get_values()
+            self.channel_names, self.sample_rate, self.max_display_samples = dialog.get_values()
             self.save_settings()
             
             # Update all open tabs
@@ -680,6 +707,7 @@ class BSRExplorer(QMainWindow):
                 if isinstance(widget, FileTab):
                     widget.update_channel_names(self.channel_names)
                     widget.update_sample_rate(self.sample_rate)
+                    widget.update_max_display_samples(self.max_display_samples)
     
     def show_empty_state(self):
         """Show empty state message"""
@@ -716,8 +744,9 @@ class BSRExplorer(QMainWindow):
             if not isinstance(widget, FileTab):
                 self.tab_widget.removeTab(0)
         
-        # Create new tab
+        # Create new tab with current settings
         tab = FileTab(self, filename, self.channel_names.copy(), self.sample_rate)
+        tab.max_display_samples = self.max_display_samples  # Apply max_display_samples
         tab_name = os.path.basename(filename)
         self.tab_widget.addTab(tab, tab_name)
         self.tab_widget.setCurrentWidget(tab)
