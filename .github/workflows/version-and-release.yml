@@ -69,15 +69,12 @@ jobs:
         sed -i "s/^Version: $CURRENT_VERSION$/Version: $NEW_VERSION/" bsr_explorer.py
         sed -i "s/^__version__ = \"$CURRENT_VERSION\"$/__version__ = \"$NEW_VERSION\"/" bsr_explorer.py
         
-        # Update version in README.md (escape asterisks properly)
-        sed -i "s/^\*\*Version:\*\* $CURRENT_VERSION$/\*\*Version:\*\* $NEW_VERSION/" README.md
-        
         # Configure git
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
         # Commit changes
-        git add bsr_explorer.py README.md
+        git add bsr_explorer.py
         git commit -m "Bump version to $NEW_VERSION"
         
         # Get commit SHA before pushing
@@ -134,6 +131,12 @@ jobs:
         Compress-Archive -Path BSRExplorer.exe -DestinationPath ../BSRExplorer-Windows.zip
       shell: pwsh
 
+    - name: Build Windows installer
+      if: matrix.os == 'windows-latest'
+      run: |
+        iscc /DMyAppVersion=${{ needs.increment-version.outputs.new_version }} installer/BSRExplorer.iss
+      shell: cmd
+
     - name: Build executable (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
@@ -150,11 +153,33 @@ jobs:
         cd dist
         zip -r ../BSRExplorer-macOS.zip BSRExplorer
 
+    - name: Build macOS DMG installer
+      if: matrix.os == 'macos-latest'
+      run: |
+        mkdir -p dmg_contents
+        cp dist/BSRExplorer dmg_contents/
+        ln -s /Applications dmg_contents/Applications
+        hdiutil create -volname "BSRExplorer" -srcfolder dmg_contents -ov -format UDZO BSRExplorer-macOS-Installer.dmg
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.asset_name }}
+
+    - name: Upload Windows installer artifact
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: BSRExplorer-Windows-Installer
+        path: BSRExplorer-Windows-Installer.exe
+
+    - name: Upload macOS DMG artifact
+      if: matrix.os == 'macos-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: BSRExplorer-macOS-Installer
+        path: BSRExplorer-macOS-Installer.dmg
 
   release:
     needs: [increment-version, build]
@@ -175,8 +200,10 @@ jobs:
         name: Release v${{ needs.increment-version.outputs.new_version }}
         files: |
           artifacts/BSRExplorer-Windows/BSRExplorer-Windows.zip
+          artifacts/BSRExplorer-Windows-Installer/BSRExplorer-Windows-Installer.exe
           artifacts/BSRExplorer-Linux/BSRExplorer-Linux.tar.gz
           artifacts/BSRExplorer-macOS/BSRExplorer-macOS.zip
+          artifacts/BSRExplorer-macOS-Installer/BSRExplorer-macOS-Installer.dmg
         draft: false
         prerelease: false
       env:

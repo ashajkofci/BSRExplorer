@@ -49,6 +49,13 @@ jobs:
         Compress-Archive -Path BSRExplorer.exe -DestinationPath ../BSRExplorer-Windows.zip
       shell: pwsh
 
+    - name: Build Windows installer
+      if: matrix.os == 'windows-latest'
+      run: |
+        for /f "tokens=2 delims== " %%A in ('findstr /R "^__version__" bsr_explorer.py') do set APP_VERSION=%%~A
+        iscc /DMyAppVersion=%APP_VERSION% installer/BSRExplorer.iss
+      shell: cmd
+
     - name: Build executable (Linux)
       if: matrix.os == 'ubuntu-latest'
       run: |
@@ -65,11 +72,33 @@ jobs:
         cd dist
         zip -r ../BSRExplorer-macOS.zip BSRExplorer
 
+    - name: Build macOS DMG installer
+      if: matrix.os == 'macos-latest'
+      run: |
+        mkdir -p dmg_contents
+        cp dist/BSRExplorer dmg_contents/
+        ln -s /Applications dmg_contents/Applications
+        hdiutil create -volname "BSRExplorer" -srcfolder dmg_contents -ov -format UDZO BSRExplorer-macOS-Installer.dmg
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.asset_name }}
+
+    - name: Upload Windows installer artifact
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: BSRExplorer-Windows-Installer
+        path: BSRExplorer-Windows-Installer.exe
+
+    - name: Upload macOS DMG artifact
+      if: matrix.os == 'macos-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: BSRExplorer-macOS-Installer
+        path: BSRExplorer-macOS-Installer.dmg
 
   release:
     needs: build
@@ -89,8 +118,10 @@ jobs:
       with:
         files: |
           artifacts/BSRExplorer-Windows/BSRExplorer-Windows.zip
+          artifacts/BSRExplorer-Windows-Installer/BSRExplorer-Windows-Installer.exe
           artifacts/BSRExplorer-Linux/BSRExplorer-Linux.tar.gz
           artifacts/BSRExplorer-macOS/BSRExplorer-macOS.zip
+          artifacts/BSRExplorer-macOS-Installer/BSRExplorer-macOS-Installer.dmg
         draft: false
         prerelease: false
       env:
