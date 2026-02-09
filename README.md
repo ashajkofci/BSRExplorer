@@ -2,7 +2,6 @@
 
 A portable, fast, and optimized viewer for BSR (Binary Signal Recording) files.
 
-**Version:** 1.0.0  
 **Author:** Adrian Shajkofci  
 **License:** MIT
 
@@ -52,9 +51,9 @@ python bsr_explorer.py
 ### Option 2: Download Pre-built Executable
 
 Download the latest release for your platform from the [Releases](../../releases) page:
-- Windows: `BSRExplorer-Windows.zip`
+- Windows: `BSRExplorer-Windows.zip` (portable) or `BSRExplorer-Windows-Installer.exe` (installer)
 - Linux: `BSRExplorer-Linux.tar.gz`
-- macOS: `BSRExplorer-macOS.zip`
+- macOS: `BSRExplorer-macOS.zip` (portable) or `BSRExplorer-macOS-Installer.dmg` (installer)
 
 ## Usage
 
