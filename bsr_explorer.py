@@ -283,6 +283,9 @@ class FileTab(QWidget):
                 
                 # Enable mouse interaction - Y axis independent, X axis linked
                 plot_widget.setMouseEnabled(x=True, y=True)
+
+                # Keep Y axis in auto-range so amplitude adapts on zoom
+                plot_widget.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
                 
                 plot_item = plot_widget.plot(pen=pg.mkPen(color=colors[i], width=1))
                 self.plot_items.append(plot_item)
@@ -302,6 +305,9 @@ class FileTab(QWidget):
             
             # Enable mouse interaction
             plot_widget.setMouseEnabled(x=True, y=True)
+
+            # Keep Y axis in auto-range so amplitude adapts on zoom
+            plot_widget.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
             
             # Connect view range change to update data dynamically (only once)
             if not self.range_change_connected:
@@ -582,6 +588,10 @@ class FileTab(QWidget):
                     time_slice = time_axis_full[start_idx:end_idx]
                     data_slice = channel_data[start_idx:end_idx]
                     self.plot_items[i].setData(time_slice, data_slice)
+
+        # Re-apply Y auto-range after data updates from zoom
+        for plot in self.plots:
+            plot.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
 
 
 class BSRExplorer(QMainWindow):
